@@ -13,7 +13,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25 (Paper 26.3 Gereksinimi)
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           java-version: '25'
@@ -27,8 +27,15 @@ jobs:
           mkdir -p src/main/java/kgd/cheatdetector/utils
           mkdir -p src/main/resources
 
+          # Paper repo uzerinden mevcut en son 26.x / 1.21.11+ API versiyonunu otomatik tespit et
+          PAPER_VER=$(curl -s https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/maven-metadata.xml | grep -oP '(?<=<version>).*?(?=</version>)' | tail -n 1)
+          if [ -z "$PAPER_VER" ]; then
+            PAPER_VER="1.21.4-R0.1-SNAPSHOT"
+          fi
+          echo "Tespit edilen Paper API surumu: $PAPER_VER"
+
           # 1. pom.xml
-          cat << 'EOF' > pom.xml
+          cat << EOF > pom.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -37,11 +44,10 @@ jobs:
 
               <groupId>kgd.cheatdetector</groupId>
               <artifactId>CheatDetector</artifactId>
-              <version>2.0.0-26.3</version>
+              <version>2.3.1-26.3</version>
               <packaging>jar</packaging>
 
               <properties>
-                  <java.version>25</java.version>
                   <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
               </properties>
 
@@ -50,17 +56,13 @@ jobs:
                       <id>papermc-repo</id>
                       <url>https://repo.papermc.io/repository/maven-public/</url>
                   </repository>
-                  <repository>
-                      <id>minecraft-libraries</id>
-                      <url>https://libraries.minecraft.net/</url>
-                  </repository>
               </repositories>
 
               <dependencies>
                   <dependency>
                       <groupId>io.papermc.paper</groupId>
                       <artifactId>paper-api</artifactId>
-                      <version>26.3-R0.1-SNAPSHOT</version>
+                      <version>${PAPER_VER}</version>
                       <scope>provided</scope>
                   </dependency>
                   <dependency>
@@ -79,7 +81,8 @@ jobs:
                           <artifactId>maven-compiler-plugin</artifactId>
                           <version>3.13.0</version>
                           <configuration>
-                              <release>25</release>
+                              <release>21</release>
+                              <proc>none</proc>
                           </configuration>
                       </plugin>
                   </plugins>
@@ -90,9 +93,9 @@ jobs:
           # 2. plugin.yml
           cat << 'EOF' > src/main/resources/plugin.yml
           name: CheatDetector
-          version: '2.0.0-26.3'
+          version: '2.3.1-26.3'
           main: kgd.cheatdetector.CheatDetector
-          api-version: '26.3'
+          api-version: '1.21'
           authors: [ Lovecraft, KGD ]
           description: Hybrid Sign-Translation and Brand Cheat Detector updated for Paper 26.3
           commands:
@@ -181,7 +184,7 @@ jobs:
               key: "itemscroller.gui.button.config_gui.generic"
               fallback: "itemscroller.gui.button.config_gui.generic"
               warning: "ItemScroller"
-             xray_advanced:
+            xray_advanced:
               mode: "KEYBIND"
               key: "key.xray.toggle"
               fallback: "key.xray.toggle"
@@ -224,7 +227,7 @@ jobs:
           }
           EOF
 
-          # 5. ConfigManager.java (ve ic sinifi TpSettings)
+          # 5. ConfigManager.java
           cat << 'EOF' > src/main/java/kgd/cheatdetector/managers/ConfigManager.java
           package kgd.cheatdetector.managers;
 
@@ -308,6 +311,7 @@ jobs:
                   }
               }
 
+              @SuppressWarnings("deprecation")
               public String getMessage(String path) {
                   String raw = plugin.getConfig().getString("messages." + path, "&cMesaj bulunamadi: " + path);
                   return ChatColor.translateAlternateColorCodes('&', raw);
@@ -387,7 +391,6 @@ jobs:
                       return true;
                   }
                   if (plugin.getConfigManager().isSkipBedrock()) {
-                      // Floodgate / Geyser UUID version 0 kontrolu ve isim oneki kontrolu
                       if (player.getUniqueId().version() == 0 || player.getName().startsWith(".")) {
                           return true;
                       }
@@ -413,6 +416,7 @@ jobs:
                   this.plugin = plugin;
               }
 
+              @SuppressWarnings("deprecation")
               public void flagAndPunish(Player player, String cheatWarning) {
                   Bukkit.getScheduler().runTask(plugin, () -> {
                       if (!player.isOnline()) return;
@@ -438,6 +442,7 @@ jobs:
                   });
               }
 
+              @SuppressWarnings("deprecation")
               public void handleTimeout(Player player) {
                   Bukkit.getScheduler().runTask(plugin, () -> {
                       if (!player.isOnline()) return;
@@ -466,7 +471,7 @@ jobs:
           }
           EOF
 
-          # 8. SignUtil.java (ve SignUtil$1 anonim ChannelDuplexHandler sinifi)
+          # 8. SignUtil.java
           cat << 'EOF' > src/main/java/kgd/cheatdetector/utils/SignUtil.java
           package kgd.cheatdetector.utils;
 
@@ -481,6 +486,7 @@ jobs:
           import org.bukkit.Material;
           import org.bukkit.block.Block;
           import org.bukkit.block.Sign;
+          import org.bukkit.block.data.BlockData;
           import org.bukkit.block.sign.Side;
           import org.bukkit.block.sign.SignSide;
           import org.bukkit.entity.Player;
@@ -527,8 +533,7 @@ jobs:
 
               public static void sendSignProbe(Player player, Location signLoc, List<SignCheckDefinition> batch) {
                   Block block = signLoc.getBlock();
-                  Material originalType = block.getType();
-                  org.bukkit.block.data.BlockData originalData = block.getBlockData().clone();
+                  BlockData originalData = block.getBlockData().clone();
 
                   block.setType(Material.OAK_SIGN, false);
                   if (block.getState() instanceof Sign sign) {
@@ -549,7 +554,6 @@ jobs:
                       player.openSign(sign, Side.FRONT);
                   }
 
-                  // 4 tick sonra tabelayi kaldir ve oyuncuya AIR gonder
                   Bukkit.getScheduler().runTaskLater(CheatDetector.getInstance(), () -> {
                       block.setBlockData(originalData, false);
                       if (player.isOnline()) {
@@ -566,513 +570,4 @@ jobs:
                           }
                       }
                       for (Field field : packet.getClass().getDeclaredFields()) {
-                          if (field.getType().equals(String[].class)) {
-                              field.setAccessible(true);
-                              return (String[]) field.get(packet);
-                          }
-                      }
-                  } catch (Exception ignored) {}
-                  return null;
-              }
-
-              private static Channel getChannel(Player player) {
-                  try {
-                      Method getHandle = player.getClass().getMethod("getHandle");
-                      Object serverPlayer = getHandle.invoke(player);
-                      for (Field f : serverPlayer.getClass().getDeclaredFields()) {
-                          f.setAccessible(true);
-                          Object conn = f.get(serverPlayer);
-                          if (conn != null && (conn.getClass().getSimpleName().contains("GamePacketListener")
-                                  || conn.getClass().getSimpleName().contains("PlayerConnection"))) {
-                              for (Field cf : conn.getClass().getSuperclass().getDeclaredFields()) {
-                                  cf.setAccessible(true);
-                                  Object netMgr = cf.get(conn);
-                                  if (netMgr != null) {
-                                      for (Field chField : netMgr.getClass().getDeclaredFields()) {
-                                          if (Channel.class.isAssignableFrom(chField.getType())) {
-                                              chField.setAccessible(true);
-                                              return (Channel) chField.get(netMgr);
-                                          }
-                                      }
-                                  }
-                              }
-                              for (Field cf : conn.getClass().getDeclaredFields()) {
-                                  cf.setAccessible(true);
-                                  Object netMgr = cf.get(conn);
-                                  if (netMgr != null) {
-                                      for (Field chField : netMgr.getClass().getDeclaredFields()) {
-                                          if (Channel.class.isAssignableFrom(chField.getType())) {
-                                              chField.setAccessible(true);
-                                              return (Channel) chField.get(netMgr);
-                                          }
-                                      }
-                                  }
-                              }
-                          }
-                      }
-                  } catch (Exception ignored) {}
-                  return null;
-              }
-          }
-          EOF
-
-          # 9. SignDetectManager.java (ve ic sinifi CheckState)
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/managers/SignDetectManager.java
-          package kgd.cheatdetector.managers;
-
-          import kgd.cheatdetector.CheatDetector;
-          import kgd.cheatdetector.utils.SignUtil;
-          import kgd.cheatdetector.utils.WhitelistUtil;
-          import org.bukkit.Bukkit;
-          import org.bukkit.Location;
-          import org.bukkit.entity.Player;
-          import org.bukkit.scheduler.BukkitTask;
-
-          import java.util.*;
-          import java.util.concurrent.ConcurrentHashMap;
-
-          public class SignDetectManager {
-              private final CheatDetector plugin;
-              private final Map<UUID, CheckState> activeScans = new ConcurrentHashMap<>();
-
-              public SignDetectManager(CheatDetector plugin) {
-                  this.plugin = plugin;
-              }
-
-              public void startScan(Player player) {
-                  if (!player.isOnline() || WhitelistUtil.isExempt(player)) return;
-                  if (!plugin.getConfigManager().isEnableSignCheck()) return;
-
-                  List<SignCheckDefinition> allChecks = plugin.getConfigManager().getSignChecks();
-                  if (allChecks.isEmpty()) return;
-
-                  stopScan(player.getUniqueId());
-
-                  Location originalLoc = player.getLocation().clone();
-                  ConfigManager.TpSettings tp = plugin.getConfigManager().getTpSettings();
-                  if (tp.isPreScanTp()) {
-                      player.teleport(tp.getInspectLocation(originalLoc));
-                  }
-
-                  CheckState state = new CheckState(player.getUniqueId(), originalLoc, allChecks);
-                  activeScans.put(player.getUniqueId(), state);
-
-                  SignUtil.injectPacketListener(player);
-                  sendNextBatch(player, state);
-              }
-
-              private void sendNextBatch(Player player, CheckState state) {
-                  if (!player.isOnline()) {
-                      stopScan(player.getUniqueId());
-                      return;
-                  }
-
-                  List<SignCheckDefinition> batch = state.nextBatch();
-                  if (batch.isEmpty()) {
-                      finishCleanScan(player, state);
-                      return;
-                  }
-
-                  Location signLoc = player.getLocation().clone().add(0, 2, 0);
-                  SignUtil.sendSignProbe(player, signLoc, batch);
-
-                  if (state.getTimeoutTask() != null) {
-                      state.getTimeoutTask().cancel();
-                  }
-
-                  BukkitTask task = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                      if (activeScans.containsKey(player.getUniqueId())) {
-                          stopScan(player.getUniqueId());
-                          plugin.getPunishManager().handleTimeout(player);
-                      }
-                  }, plugin.getConfigManager().getTimeoutTicks());
-
-                  state.setTimeoutTask(task);
-              }
-
-              public void handleSignResponse(Player player, String[] lines) {
-                  CheckState state = activeScans.get(player.getUniqueId());
-                  if (state == null || state.isCompleted()) return;
-
-                  if (state.getTimeoutTask() != null) {
-                      state.getTimeoutTask().cancel();
-                  }
-
-                  List<SignCheckDefinition> currentBatch = state.getCurrentBatch();
-                  for (int i = 0; i < currentBatch.size() && i < lines.length; i++) {
-                      SignCheckDefinition def = currentBatch.get(i);
-                      String received = lines[i] != null ? lines[i].trim() : "";
-
-                      if (!received.isEmpty() && !received.equals(def.getKey()) && !received.equals(def.getFallback())) {
-                          state.setCompleted(true);
-                          stopScan(player.getUniqueId());
-                          plugin.getPunishManager().flagAndPunish(player, def.getWarning() + " (" + received + ")");
-                          return;
-                      }
-                  }
-
-                  Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                      if (activeScans.containsKey(player.getUniqueId())) {
-                          sendNextBatch(player, state);
-                      }
-                  }, 6L);
-              }
-
-              private void finishCleanScan(Player player, CheckState state) {
-                  state.setCompleted(true);
-                  stopScan(player.getUniqueId());
-
-                  ConfigManager.TpSettings tp = plugin.getConfigManager().getTpSettings();
-                  if (tp.isPostScanSpawnTp()) {
-                      player.teleport(tp.getSpawnLocation(state.getOriginalLocation()));
-                  } else if (tp.isPreScanTp() && tp.isReturnAfterScan()) {
-                      player.teleport(state.getOriginalLocation());
-                  }
-
-                  plugin.getPunishManager().logClean(player);
-              }
-
-              public boolean isScanning(UUID uuid) {
-                  return activeScans.containsKey(uuid);
-              }
-
-              public void stopScan(UUID uuid) {
-                  CheckState state = activeScans.remove(uuid);
-                  if (state != null && state.getTimeoutTask() != null) {
-                      state.getTimeoutTask().cancel();
-                  }
-                  Player p = Bukkit.getPlayer(uuid);
-                  if (p != null) {
-                      SignUtil.uninjectPacketListener(p);
-                  }
-              }
-
-              public static class CheckState {
-                  private final UUID playerUuid;
-                  private final Location originalLocation;
-                  private final List<SignCheckDefinition> allChecks;
-                  private List<SignCheckDefinition> currentBatch = Collections.emptyList();
-                  private int cursor = 0;
-                  private BukkitTask timeoutTask;
-                  private boolean completed = false;
-
-                  public CheckState(UUID playerUuid, Location originalLocation, List<SignCheckDefinition> allChecks) {
-                      this.playerUuid = playerUuid;
-                      this.originalLocation = originalLocation;
-                      this.allChecks = new ArrayList<>(allChecks);
-                  }
-
-                  public List<SignCheckDefinition> nextBatch() {
-                      if (cursor >= allChecks.size()) {
-                          currentBatch = Collections.emptyList();
-                          return currentBatch;
-                      }
-                      int end = Math.min(cursor + 4, allChecks.size());
-                      currentBatch = allChecks.subList(cursor, end);
-                      cursor = end;
-                      return currentBatch;
-                  }
-
-                  public UUID getPlayerUuid() { return playerUuid; }
-                  public Location getOriginalLocation() { return originalLocation; }
-                  public List<SignCheckDefinition> getCurrentBatch() { return currentBatch; }
-                  public BukkitTask getTimeoutTask() { return timeoutTask; }
-                  public void setTimeoutTask(BukkitTask timeoutTask) { this.timeoutTask = timeoutTask; }
-                  public boolean isCompleted() { return completed; }
-                  public void setCompleted(boolean completed) { this.completed = completed; }
-              }
-          }
-          EOF
-
-          # 10. BrandListener.java
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/listeners/BrandListener.java
-          package kgd.cheatdetector.listeners;
-
-          import kgd.cheatdetector.CheatDetector;
-          import kgd.cheatdetector.utils.WhitelistUtil;
-          import org.bukkit.entity.Player;
-          import org.bukkit.event.EventHandler;
-          import org.bukkit.event.Listener;
-          import org.bukkit.event.player.PlayerClientBrandEvent;
-          import org.bukkit.plugin.messaging.PluginMessageListener;
-          import org.jetbrains.annotations.NotNull;
-
-          import java.nio.charset.StandardCharsets;
-
-          public class BrandListener implements Listener, PluginMessageListener {
-              private final CheatDetector plugin;
-
-              public BrandListener(CheatDetector plugin) {
-                  this.plugin = plugin;
-              }
-
-              @EventHandler
-              public void onClientBrand(PlayerClientBrandEvent event) {
-                  checkBrand(event.getPlayer(), event.getClientBrand());
-              }
-
-              @Override
-              public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, byte[] message) {
-                  if (!channel.equals("minecraft:brand") && !channel.equals("MC|Brand")) return;
-                  if (message.length == 0) return;
-                  String brand = new String(message, StandardCharsets.UTF_8).trim();
-                  if (brand.length() > 1) {
-                      brand = brand.substring(1);
-                  }
-                  checkBrand(player, brand);
-              }
-
-              private void checkBrand(Player player, String brand) {
-                  if (!plugin.getConfigManager().isEnableBrandCheck()) return;
-                  if (brand == null || WhitelistUtil.isExempt(player)) return;
-
-                  String lower = brand.toLowerCase();
-                  for (String blocked : plugin.getConfigManager().getBlockedBrands()) {
-                      if (lower.contains(blocked.toLowerCase())) {
-                          plugin.getPunishManager().flagAndPunish(player, "Client Brand (" + brand + ")");
-                          return;
-                      }
-                  }
-              }
-          }
-          EOF
-
-          # 11. JoinListener.java
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/listeners/JoinListener.java
-          package kgd.cheatdetector.listeners;
-
-          import kgd.cheatdetector.CheatDetector;
-          import kgd.cheatdetector.utils.WhitelistUtil;
-          import org.bukkit.Bukkit;
-          import org.bukkit.entity.Player;
-          import org.bukkit.event.EventHandler;
-          import org.bukkit.event.Listener;
-          import org.bukkit.event.player.PlayerJoinEvent;
-          import org.bukkit.event.player.PlayerMoveEvent;
-          import org.bukkit.event.player.PlayerQuitEvent;
-
-          public class JoinListener implements Listener {
-              private final CheatDetector plugin;
-
-              public JoinListener(CheatDetector plugin) {
-                  this.plugin = plugin;
-              }
-
-              @EventHandler
-              public void onJoin(PlayerJoinEvent event) {
-                  Player player = event.getPlayer();
-                  if (WhitelistUtil.isExempt(player)) return;
-
-                  Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                      if (player.isOnline()) {
-                          plugin.getSignDetectManager().startScan(player);
-                      }
-                  }, plugin.getConfigManager().getScanDelay());
-              }
-
-              @EventHandler
-              public void onQuit(PlayerQuitEvent event) {
-                  plugin.getSignDetectManager().stopScan(event.getPlayer().getUniqueId());
-              }
-
-              @EventHandler
-              public void onMove(PlayerMoveEvent event) {
-                  if (!plugin.getConfigManager().isLockMovement()) return;
-                  if (plugin.getSignDetectManager().isScanning(event.getPlayer().getUniqueId())) {
-                      if (event.getFrom().getX() != event.getTo().getX() ||
-                          event.getFrom().getZ() != event.getTo().getZ()) {
-                          event.setTo(event.getFrom());
-                      }
-                  }
-              }
-          }
-          EOF
-
-          # 12. SignListener.java
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/listeners/SignListener.java
-          package kgd.cheatdetector.listeners;
-
-          import io.papermc.paper.event.packet.UncheckedSignChangeEvent;
-          import kgd.cheatdetector.CheatDetector;
-          import net.kyori.adventure.text.Component;
-          import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
-          import org.bukkit.event.EventHandler;
-          import org.bukkit.event.EventPriority;
-          import org.bukkit.event.Listener;
-          import org.bukkit.event.block.SignChangeEvent;
-
-          import java.util.List;
-
-          public class SignListener implements Listener {
-              private final CheatDetector plugin;
-
-              public SignListener(CheatDetector plugin) {
-                  this.plugin = plugin;
-              }
-
-              @EventHandler(priority = EventPriority.LOWEST)
-              public void onSignChange(SignChangeEvent event) {
-                  if (!plugin.getSignDetectManager().isScanning(event.getPlayer().getUniqueId())) return;
-                  event.setCancelled(true);
-
-                  List<Component> compLines = event.lines();
-                  String[] plainLines = new String[compLines.size()];
-                  for (int i = 0; i < compLines.size(); i++) {
-                      plainLines[i] = PlainTextComponentSerializer.plainText().serialize(compLines.get(i));
-                  }
-                  plugin.getSignDetectManager().handleSignResponse(event.getPlayer(), plainLines);
-              }
-
-              @EventHandler(priority = EventPriority.LOWEST)
-              public void onUncheckedSignChange(UncheckedSignChangeEvent event) {
-                  if (!plugin.getSignDetectManager().isScanning(event.getPlayer().getUniqueId())) return;
-                  event.setCancelled(true);
-
-                  List<Component> compLines = event.lines();
-                  String[] plainLines = new String[compLines.size()];
-                  for (int i = 0; i < compLines.size(); i++) {
-                      plainLines[i] = PlainTextComponentSerializer.plainText().serialize(compLines.get(i));
-                  }
-                  plugin.getSignDetectManager().handleSignResponse(event.getPlayer(), plainLines);
-              }
-          }
-          EOF
-
-          # 13. CheatDetectorCommand.java
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/commands/CheatDetectorCommand.java
-          package kgd.cheatdetector.commands;
-
-          import kgd.cheatdetector.CheatDetector;
-          import org.bukkit.Bukkit;
-          import org.bukkit.ChatColor;
-          import org.bukkit.command.Command;
-          import org.bukkit.command.CommandExecutor;
-          import org.bukkit.command.CommandSender;
-          import org.bukkit.command.TabCompleter;
-          import org.bukkit.entity.Player;
-          import org.jetbrains.annotations.NotNull;
-
-          import java.util.ArrayList;
-          import java.util.Arrays;
-          import java.util.List;
-
-          public class CheatDetectorCommand implements CommandExecutor, TabCompleter {
-              private final CheatDetector plugin;
-
-              public CheatDetectorCommand(CheatDetector plugin) {
-                  this.plugin = plugin;
-              }
-
-              @Override
-              public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
-                  if (!sender.hasPermission("cheatdetector.admin")) {
-                      sender.sendMessage(plugin.getConfigManager().getMessage("no-permission"));
-                      return true;
-                  }
-
-                  if (args.length == 0) {
-                      sender.sendMessage(ChatColor.AQUA + "CheatDetector v2.0.0 (Paper 26.3)");
-                      sender.sendMessage(ChatColor.GRAY + "/" + label + " reload " + ChatColor.DARK_GRAY + "- Config yeniler");
-                      sender.sendMessage(ChatColor.GRAY + "/" + label + " scan <oyuncu> " + ChatColor.DARK_GRAY + "- Oyuncuyu tarar");
-                      return true;
-                  }
-
-                  if (args[0].equalsIgnoreCase("reload")) {
-                      plugin.getConfigManager().reload();
-                      sender.sendMessage(plugin.getConfigManager().getMessage("reloaded"));
-                      return true;
-                  }
-
-                  if (args[0].equalsIgnoreCase("scan") && args.length >= 2) {
-                      Player target = Bukkit.getPlayer(args[1]);
-                      if (target == null || !target.isOnline()) {
-                          sender.sendMessage(ChatColor.RED + "Oyuncu cevrimici degil!");
-                          return true;
-                      }
-                      plugin.getSignDetectManager().startScan(target);
-                      sender.sendMessage(ChatColor.GREEN + target.getName() + " icin tabela hile taramasi baslatildi.");
-                      return true;
-                  }
-
-                  return true;
-              }
-
-              @Override
-              public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
-                  if (args.length == 1) {
-                      return Arrays.asList("reload", "scan");
-                  }
-                  if (args.length == 2 && args[0].equalsIgnoreCase("scan")) {
-                      List<String> names = new ArrayList<>();
-                      for (Player p : Bukkit.getOnlinePlayers()) {
-                          names.add(p.getName());
-                      }
-                      return names;
-                  }
-                  return new ArrayList<>();
-              }
-          }
-          EOF
-
-          # 14. CheatDetector.java (Ana Sinif)
-          cat << 'EOF' > src/main/java/kgd/cheatdetector/CheatDetector.java
-          package kgd.cheatdetector;
-
-          import kgd.cheatdetector.commands.CheatDetectorCommand;
-          import kgd.cheatdetector.listeners.BrandListener;
-          import kgd.cheatdetector.listeners.JoinListener;
-          import kgd.cheatdetector.listeners.SignListener;
-          import kgd.cheatdetector.managers.ConfigManager;
-          import kgd.cheatdetector.managers.PunishManager;
-          import kgd.cheatdetector.managers.SignDetectManager;
-          import org.bukkit.Bukkit;
-          import org.bukkit.plugin.java.JavaPlugin;
-
-          public class CheatDetector extends JavaPlugin {
-              private static CheatDetector instance;
-              private ConfigManager configManager;
-              private PunishManager punishManager;
-              private SignDetectManager signDetectManager;
-
-              @Override
-              public void onEnable() {
-                  instance = this;
-                  this.configManager = new ConfigManager(this);
-                  this.punishManager = new PunishManager(this);
-                  this.signDetectManager = new SignDetectManager(this);
-
-                  BrandListener brandListener = new BrandListener(this);
-                  Bukkit.getMessenger().registerIncomingPluginChannel(this, "minecraft:brand", brandListener);
-                  Bukkit.getPluginManager().registerEvents(brandListener, this);
-                  Bukkit.getPluginManager().registerEvents(new JoinListener(this), this);
-                  Bukkit.getPluginManager().registerEvents(new SignListener(this), this);
-
-                  CheatDetectorCommand cmd = new CheatDetectorCommand(this);
-                  if (getCommand("cheatdetector") != null) {
-                      getCommand("cheatdetector").setExecutor(cmd);
-                      getCommand("cheatdetector").setTabCompleter(cmd);
-                  }
-
-                  getLogger().info("CheatDetector Paper 26.3 surumu aktif edildi!");
-              }
-
-              @Override
-              public void onDisable() {
-                  Bukkit.getMessenger().unregisterIncomingPluginChannel(this);
-              }
-
-              public static CheatDetector getInstance() { return instance; }
-              public ConfigManager getConfigManager() { return configManager; }
-              public PunishManager getPunishManager() { return punishManager; }
-              public SignDetectManager getSignDetectManager() { return signDetectManager; }
-          }
-          EOF
-
-      - name: Maven ile JAR Derle
-        run: mvn clean package --batch-mode
-
-      - name: Derlenen JAR Dosyasini Yukle (Artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: CheatDetector-26.3-Paper
-          path: target/CheatDetector-26.3.jar
+                          if (field.get
