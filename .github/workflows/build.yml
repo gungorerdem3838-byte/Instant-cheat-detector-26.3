@@ -27,12 +27,11 @@ jobs:
           mkdir -p src/main/java/kgd/cheatdetector/utils
           mkdir -p src/main/resources
 
-          # Paper repo uzerinden mevcut en son 26.x / 1.21.11+ API versiyonunu otomatik tespit et
           PAPER_VER=$(curl -s https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/maven-metadata.xml | grep -oP '(?<=<version>).*?(?=</version>)' | tail -n 1)
           if [ -z "$PAPER_VER" ]; then
             PAPER_VER="1.21.4-R0.1-SNAPSHOT"
           fi
-          echo "Tespit edilen Paper API surumu: $PAPER_VER"
+          echo "Kullanilan Paper API surumu: $PAPER_VER"
 
           # 1. pom.xml
           cat << EOF > pom.xml
@@ -787,16 +786,17 @@ jobs:
           }
           EOF
 
-          # 10. BrandListener.java
+          # 10. BrandListener.java (PlayerClientBrandEvent kaldirildi, PluginMessageListener + getClientBrandName eklendi)
           cat << 'EOF' > src/main/java/kgd/cheatdetector/listeners/BrandListener.java
           package kgd.cheatdetector.listeners;
 
           import kgd.cheatdetector.CheatDetector;
           import kgd.cheatdetector.utils.WhitelistUtil;
+          import org.bukkit.Bukkit;
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
           import org.bukkit.event.Listener;
-          import org.bukkit.event.player.PlayerClientBrandEvent;
+          import org.bukkit.event.player.PlayerJoinEvent;
           import org.bukkit.plugin.messaging.PluginMessageListener;
           import org.jetbrains.annotations.NotNull;
 
@@ -810,24 +810,29 @@ jobs:
               }
 
               @EventHandler
-              public void onClientBrand(PlayerClientBrandEvent event) {
-                  checkBrand(event.getPlayer(), event.getClientBrand());
+              public void onJoinBrandCheck(PlayerJoinEvent event) {
+                  Player player = event.getPlayer();
+                  Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                      if (player.isOnline()) {
+                          checkBrand(player, player.getClientBrandName());
+                      }
+                  }, 20L);
               }
 
               @Override
               public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, byte[] message) {
                   if (!channel.equals("minecraft:brand") && !channel.equals("MC|Brand")) return;
-                  if (message.length == 0) return;
+                  if (message == null || message.length == 0) return;
                   String brand = new String(message, StandardCharsets.UTF_8).trim();
-                  if (brand.length() > 1) {
+                  if (brand.length() > 1 && brand.charAt(0) < 32) {
                       brand = brand.substring(1);
                   }
                   checkBrand(player, brand);
               }
 
-              private void checkBrand(Player player, String brand) {
+              public void checkBrand(Player player, String brand) {
                   if (!plugin.getConfigManager().isEnableBrandCheck()) return;
-                  if (brand == null || WhitelistUtil.isExempt(player)) return;
+                  if (brand == null || brand.isEmpty() || WhitelistUtil.isExempt(player)) return;
 
                   String lower = brand.toLowerCase();
                   for (String blocked : plugin.getConfigManager().getBlockedBrands()) {
